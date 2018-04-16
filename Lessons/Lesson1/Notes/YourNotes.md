@@ -1,3 +1,2 @@
 *add your notes and reflections here*
-hello
-:D 
+hello world :)
