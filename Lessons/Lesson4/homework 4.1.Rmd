@@ -1,0 +1,159 @@
+---
+title: "homework 4.1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library(dplyr)
+dt_Policy <- read.csv("../../data/policy_history.csv") %>% distinct(NrPolicy, NrObject, .keep_all = TRUE) 
+dt_Claims <- read.csv("../../data/claims.csv") %>% distinct(NrClaim, .keep_all = TRUE)
+dt_pol_w_claims <- left_join(dt_Policy, 
+                             dt_Claims, 
+                             by = c("NrPolicy", "NrObject")
+                    )
+```
+
+```{r}
+library(lubridate)
+dt_pol_w_claims <- 
+  dt_pol_w_claims %>% mutate(Time_Exposure = lubridate::dmy(Dt_Exp_End) - lubridate::dmy(Dt_Exp_Start))
+```
+
+```{r}
+dt_pol_w_claims <- 
+  dt_pol_w_claims %>% 
+  mutate(Ult_Loss = Paid + Reserves,
+         Burning_Cost = ifelse(is.na(Ult_Loss), 0,  Ult_Loss / as.integer(Time_Exposure))
+  )
+```
+
+
+One-Way analysis means we always look for one explanatory variable and one which we try to explain, in our case it's our target we identified. So first of all it make sense to look into them as basic _scatterplot_.
+
+For the first one-way analysis we will try to explore feature about vehicle type of client: `Veh_type1`
+
+```{r}
+library(ggplot2)
+dt_pol_w_claims %>% 
+ggplot(aes(y = Burning_Cost, x = Veh_type1)) + 
+geom_jitter()
+
+levels(dt_pol_w_claims$Veh_type1)
+
+#Mozeme vidiet, ze niektori klienti su viac rizikovejsi lebo bodky im prisluchajuce su priemerne #vyssie. Vyssie su pre private cars, commercial car <3100 kg, commercial car <3500 kg, driving #school car.   
+```
+
+
+Does it helps you to identify any trend? Hmm...looks like outliers screwing it up. Lets go for numbers then.
+
+```{r}
+dt_pol_w_claims %>% filter(Burning_Cost != 0)%>% 
+group_by(Veh_type1) %>% 
+summarise(BC_avg = mean(Burning_Cost, na.rm  = TRUE),
+BC_median = median(Burning_Cost, na.rm = TRUE),
+cnt = n()) %>% 
+arrange(desc(BC_avg))
+#Najvyssi priemer pre Burning_Cost ma tow-car a pre median taxi.
+#Podla grafu vyzeralo ze klienti, ktori pouzivaju private car su rizikovejsi ale ako vidime z #tabulky  v tych najvacsich priemeroch a pri mediane sa nenachadzaju tito klienti kedze tam je #najviac dat  a vela hodnot je nizkych (co je mozne vidiet aj v nasledujucom obrazku).
+```
+
+Why we choose those three metrics? And do you see the story behind them?
+
+```{r}
+dt_pol_w_claims %>% 
+ggplot(aes(y = Burning_Cost, x = Veh_type1)) + 
+geom_boxplot() +
+ylim(0, 100)
+
+#Z obrazku vidno, ze je tam vela outlierov, ktori nam to pokazia, teda samostatna premenna nie je dobry prediktor, ale moze byt uzitocna pri inych modeloch. 
+```
+
+
+
+For the first one-way analysis we will try to explore feature about vehicle type of client: `Customer_Type1`
+
+```{r}
+library(ggplot2)
+dt_pol_w_claims %>% 
+ggplot(aes(y = Burning_Cost, x = Customer_Type)) + 
+geom_jitter()
+#vidim, ze priemerne vyssie Burning_cost ma Customer_Type C, teda vyzera, ze tito klienti su viac rizikovejsi 
+```
+
+
+Does it helps you to identify any trend? Hmm...looks like outliers screwing it up. Lets go for numbers then.
+
+```{r}
+dt_pol_w_claims %>% filter(Burning_Cost != 0)%>% 
+group_by(Customer_Type) %>% 
+summarise(BC_avg = mean(Burning_Cost, na.rm  = TRUE),
+BC_median = median(Burning_Cost, na.rm = TRUE),
+cnt = n()) %>% 
+arrange(desc(BC_avg))
+#median je vyssi pri Customer_Type S, co je sposobene tym ze mam viac dat pre Customer_Type C, teda vela mensich hodnot pre Burning cost co sposobilo ze median je vyssi pre S  
+#priemer je vyssi pre C
+```
+
+Why we choose those three metrics? And do you see the story behind them?
+
+```{r}
+dt_pol_w_claims %>% 
+ggplot(aes(y = Burning_Cost, x = Customer_Type)) + 
+geom_boxplot() +
+ylim(0, 100)
+```
+
+
+
+
+
+---
+title: "Very basic GLM"
+output: html_document
+---
+
+
+We created Target and analysed it with One-Way approach. Now, lets have look to how it perfomrs with very basic glm.
+
+### Distribution of the Target
+Before we jump directly to modelling, need to decide on which type of GLM model we can actually use.
+The first shoot for decision making could be to draw a distribution for our Target.
+
+```{r}
+library(ggplot2)
+ggplot(data = dt_pol_w_claims,
+aes(x = Burning_Cost)) +
+geom_histogram()
+```
+Not so much of usefull as there is a lot of clients they do not have any claim. Lets remove them and some outliers as well.
+
+```{r}
+library(ggplot2)
+ggplot(data = dt_pol_w_claims %>% filter(Burning_Cost != 0, Burning_Cost < 100),
+aes(x = Burning_Cost)) +
+geom_histogram()
+```
+
+What type of distribution it reminds you? It looks like `Gamma` or `Tweedie` (if you have never heard about Tweedie distribution, it is combination of Poisson and Gamma, check wiki for more info). 
+
+To make a proper decision we would rather to run some statistical test on matching distribution, e.g. Kolmogorov-Smirnov test and similar.
+
+
+So lets try `Gamma` as a first shoot.
+### First Model
+```{r}
+model1 <- glm(data = dt_pol_w_claims %>% filter(Burning_Cost != 0, Burning_Cost < 100),
+formula = Burning_Cost ~ Veh_type1+Customer_Type,
+family = Gamma())
+```
+
+```{r}
+summary(model1)
+#co sa tyka signifikantnosti regresnych koeficientov, tak regresne koeficienty prisluchajuce kategoriam commercial car <3100 kg, commercial car <3500 kg, driving school car, private car, taxi category A su statisticky signifikantne a taktiez aj konstantny clen
+#podla mojho nazoru je vhodnejsie vyuzit v modeli viac premennych teda ziskat co najviac informacie z danych dat
+#vyskusala by som zostrojit viacero modelov a na zaklade AIC by som porovnala tieto modely, # podla toho, ktory model by vysiel najlepsi ten by som pouzila na dalsie analyzy
+```
+
